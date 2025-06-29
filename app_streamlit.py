@@ -1,9 +1,12 @@
 # app_streamlit.py
-streamlit
-pandas
-numpy
-scikit-learn
-openai
+import streamlit as st
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
+from openai import OpenAI
+import os
 
 # Instanciation OpenAI (pense à avoir OPENAI_API_KEY)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
