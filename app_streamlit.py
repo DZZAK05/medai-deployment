@@ -5,11 +5,12 @@ import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
+import streamlit as st
 from openai import OpenAI
-import os
 
-# Instanciation OpenAI (pense à avoir OPENAI_API_KEY)
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+
+
 
 # 1. Générer les données
 @st.cache_data
