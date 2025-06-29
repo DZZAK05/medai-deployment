@@ -7,6 +7,11 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
 from openai import OpenAI
 import os
+streamlit
+pandas
+numpy
+scikit-learn
+openai
 
 # Instanciation OpenAI (pense à avoir OPENAI_API_KEY)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
