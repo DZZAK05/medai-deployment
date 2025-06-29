@@ -6,8 +6,10 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
 import streamlit as st
+import streamlit as st
 from openai import OpenAI
 
+# On récupère la clé depuis les Secrets de Streamlit Cloud
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 
