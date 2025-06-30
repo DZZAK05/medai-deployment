@@ -6,6 +6,8 @@ import io
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
+PDF_MIME_TYPE = "application/pdf"
+
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from openai import OpenAI
@@ -64,52 +66,34 @@ def split_long_lines(text, max_length=100):
     return lines
 
 
-def create_pdf_buffer(report_text: str) -> io.BytesIO:
-    buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=letter)
-    _, height = letter
+from fpdf import FPDF
+import io
 
-    text = c.beginText(40, height - 40)
-    text.setFont("Helvetica", 11)
-    line_height = 14
-    y = height - 40
-
-    # Utilise la fonction de découpe
-    for line in split_long_lines(report_text):
-        if y < 40:
-            c.drawText(text)
-            c.showPage()
-            text = c.beginText(40, height - 40)
-            text.setFont("Helvetica", 11)
-            y = height - 40
-        text.textLine(line)
-        y -= line_height
-
-    c.drawText(text)
-    c.showPage()
-    c.save()
-
-    buffer.seek(0)
-    return buffer
-
+def create_pdf_buffer(text: str) -> io.BytesIO:
+    buf = io.BytesIO()
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    for line in text.split("\n"):
+        pdf.multi_cell(0, 10, line)
+    pdf.output(buf)
+    buf.seek(0)
+    return buf
 
 def main():
     st.title("IA Médicale – Démo")
 
-    st.header("Test patient")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        temp = st.number_input("Température (°C)", 34.0, 42.0, 37.0, 0.1)
-    with col2:
-        fc = st.number_input("Fréq. cardiaque (bpm)", 40, 180, 75, 1)
-    with col3:
-        pa = st.number_input("Pression (mmHg)", 80, 200, 120, 1)
+    st.sidebar.header("Test patient")
+    temp = st.sidebar.number_input("Température (°C)", 34.0, 42.0, 37.0, 0.1)
+    fc   = st.sidebar.number_input("Fréq. cardiaque (bpm)", 40, 180, 75, 1)
+    pa   = st.sidebar.number_input("Pression (mmHg)", 80, 200, 120, 1)
 
     # Historique en session
     if "history" not in st.session_state:
         st.session_state.history = []
 
-    if st.button("Prédire & Générer rapport"):
+    if st.sidebar.button("Prédire & Générer rapport"):
         df    = generer_donnees()
         mdl   = entrainer_modele(df)
         verdict = mdl.predict([[temp, fc, pa]])[0]
@@ -139,7 +123,7 @@ def main():
             "⬇️ Télécharger ce rapport en PDF",
             data=pdf_buf,
             file_name="rapport_medical.pdf",
-            mime="application/pdf"
+            mime=PDF_MIME_TYPE
         )
 
     # Affichage de l'historique
@@ -158,14 +142,15 @@ def main():
         )
 
         # Téléchargement PDF du dernier rapport
-        last_report = st.session_state.history[-1]["rapport"]
-        pdf_buffer  = create_pdf_buffer(last_report)
-        st.download_button(
-            "⬇️ Télécharger le dernier rapport PDF",
-            data=pdf_buffer,
-            file_name="rapport_medical.pdf",
-            mime="application/pdf"
-        )
+        if len(df_hist) > 0:
+            last_rapport = df_hist.iloc[-1]["rapport"]
+            pdf_buffer = create_pdf_buffer(last_rapport)
+            st.download_button(
+                "⬇️ Télécharger le dernier rapport PDF",
+                data=pdf_buffer,
+                file_name="rapport_medical.pdf",
+                mime=PDF_MIME_TYPE
+            )
 
     # Section : Générer un PDF à partir d'un texte libre
     st.header("Générer un PDF à partir d'un texte libre")
@@ -177,14 +162,12 @@ def main():
                 "⬇️ Télécharger le PDF du texte saisi",
                 data=pdf_buf_libre,
                 file_name="texte_libre.pdf",
-                mime="application/pdf"
+                mime=PDF_MIME_TYPE
             )
         else:
             st.warning("Veuillez saisir du texte avant de générer le PDF.")
 
-
 if __name__ == "__main__":
     main()
-
 
 
