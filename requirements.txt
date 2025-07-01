@@ -1,8 +1,10 @@
-numpy
+streamlit
 pandas
-matplotlib
+numpy
 scikit-learn
-jupyter
 openai
-
+reportlab
+xlsxwriter
+flask
+fpdf2
 
