@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import io
-
+from fpdf import FPDF
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
@@ -66,20 +66,29 @@ def split_long_lines(text, max_length=100):
     return lines
 
 
-from fpdf import FPDF
-import io
 
-def create_pdf_buffer(text: str) -> io.BytesIO:
+def create_pdf_buffer(report_text: str) -> io.BytesIO:
+    # 0) normalisation des caractères « problématiques »
+    # remplace l’apostrophe typographique par une apostrophe ASCII
+    clean_text = report_text.replace("’", "'")\
+                            .replace("–", "-")\
+                            .replace("—", "-")\
+                            # ajoute d’autres .replace() si besoin
+
     buf = io.BytesIO()
     pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     pdf.set_font("Arial", size=12)
-    for line in text.split("\n"):
+
+    for line in clean_text.split("\n"):
         pdf.multi_cell(0, 10, line)
-    pdf.output(buf)
+
+    pdf.output(buf)  # ici on passe le buffer BytesIO
     buf.seek(0)
     return buf
+
+
+
 
 def main():
     st.title("IA Médicale – Démo")
