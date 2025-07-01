@@ -6,5 +6,6 @@ openai
 reportlab
 xlsxwriter
 flask
+fpdf
 fpdf2
 
