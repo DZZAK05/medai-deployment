@@ -51,25 +51,35 @@ def generer_rapport(t, c, p, verdict):
     return resp.choices[0].message.content
 
 
+import io
+from fpdf import FPDF
+
 def create_pdf_buffer(report_text: str) -> io.BytesIO:
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     pdf.set_font("Arial", size=12)
 
-    # Largeur utilisable de la page
     usable_width = pdf.w - pdf.l_margin - pdf.r_margin
-    line_height  = pdf.font_size_pt * 0.35  # conversion pt→mm approximative
+    line_height  = pdf.font_size_pt * 0.35
 
-    # Génère le PDF en chaîne
     for line in report_text.split("\n"):
         pdf.multi_cell(usable_width, line_height, line)
 
-    pdf_str   = pdf.output(dest="S")            # PDF en string
-    pdf_bytes = pdf_str.encode("latin-1", "replace")
-    buf       = io.BytesIO(pdf_bytes)
+    # Récupère le PDF sous forme de bytearray
+    pdf_output = pdf.output(dest="S")
+
+    # Convertit en bytes si nécessaire
+    if isinstance(pdf_output, (bytes, bytearray)):
+        pdf_bytes = bytes(pdf_output)
+    else:
+        # cas où fpdf renverrait du str (rare)
+        pdf_bytes = pdf_output.encode("latin-1", "replace")
+
+    buf = io.BytesIO(pdf_bytes)
     buf.seek(0)
     return buf
+
 
 
 def main():
