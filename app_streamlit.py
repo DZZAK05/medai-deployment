@@ -2,17 +2,13 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import io
+
 from fpdf import FPDF
-from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas
-
-PDF_MIME_TYPE = "application/pdf"
-
+from openai import OpenAI
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from openai import OpenAI
 
-# 1) Initialise le client OpenAI UNE SEULE FOIS
+# Initialise le client OpenAI
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 
@@ -41,53 +37,39 @@ def entrainer_modele(df):
 def generer_rapport(t, c, p, verdict):
     prompt = (
         "Tu es un médecin rédigeant un rapport médical très détaillé.\n"
-        f"1) Contexte et antécédents du patient.\n"
-        f"2) Examen clinique : température={t}°C, fréquence cardiaque={c} bpm, pression={p} mmHg.\n"
-        f"3) Diagnostic : {'urgence' if verdict else 'stable'}.\n"
-        "4) Analyse approfondie des signes vitaux.\n"
-        "5) Conclusion et recommandations cliniques.\n"
-        "Présente chaque section comme un paragraphe séparé."
+        f"1) Examen : température={t}°C, fréquence cardiaque={c} bpm, pression={p} mmHg.\n"
+        f"2) Diagnostic : {'urgence' if verdict else 'stable'}.\n"
+        "3) Analyse des signes vitaux et recommandations cliniques.\n"
+        "Présente chaque point en paragraphe séparé."
     )
     resp = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
+        messages=[{"role":"user","content":prompt}],
         max_tokens=1500,
-        temperature=0.7,
+        temperature=0.7
     )
     return resp.choices[0].message.content
 
 
-def split_long_lines(text, max_length=100):
-    """Découpe les lignes trop longues pour le PDF."""
-    import textwrap
-    lines = []
-    for line in text.split('\n'):
-        lines.extend(textwrap.wrap(line, width=max_length) or [''])
-    return lines
-
-
-
 def create_pdf_buffer(report_text: str) -> io.BytesIO:
-    # 0) normalisation des caractères « problématiques »
-    # remplace l’apostrophe typographique par une apostrophe ASCII
-    clean_text = report_text.replace("’", "'")\
-                            .replace("–", "-")\
-                            .replace("—", "-")\
-                            # ajoute d’autres .replace() si besoin
-
-    buf = io.BytesIO()
     pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     pdf.set_font("Arial", size=12)
 
-    for line in clean_text.split("\n"):
-        pdf.multi_cell(0, 10, line)
+    # Largeur utilisable de la page
+    usable_width = pdf.w - pdf.l_margin - pdf.r_margin
+    line_height  = pdf.font_size_pt * 0.35  # conversion pt→mm approximative
 
-    pdf.output(buf)  # ici on passe le buffer BytesIO
+    # Génère le PDF en chaîne
+    for line in report_text.split("\n"):
+        pdf.multi_cell(usable_width, line_height, line)
+
+    pdf_str   = pdf.output(dest="S")            # PDF en string
+    pdf_bytes = pdf_str.encode("latin-1", "replace")
+    buf       = io.BytesIO(pdf_bytes)
     buf.seek(0)
     return buf
-
-
 
 
 def main():
@@ -98,21 +80,30 @@ def main():
     fc   = st.sidebar.number_input("Fréq. cardiaque (bpm)", 40, 180, 75, 1)
     pa   = st.sidebar.number_input("Pression (mmHg)", 80, 200, 120, 1)
 
-    # Historique en session
     if "history" not in st.session_state:
         st.session_state.history = []
 
     if st.sidebar.button("Prédire & Générer rapport"):
-        df    = generer_donnees()
-        mdl   = entrainer_modele(df)
-        verdict = mdl.predict([[temp, fc, pa]])[0]
+        df      = generer_donnees()
+        modele  = entrainer_modele(df)
+        verdict = modele.predict([[temp, fc, pa]])[0]
+
+        st.markdown(f"**Verdict :** {'🆘 Urgence' if verdict else '✅ Stable'}")
+
         rapport = generer_rapport(temp, fc, pa, verdict)
-        st.session_state.last_rapport = rapport
-        st.session_state.last_verdict = verdict
-        st.session_state.last_temp = temp
-        st.session_state.last_fc = fc
-        st.session_state.last_pa = pa
-        # Historique
+        st.markdown("**Rapport IA :**")
+        st.write(rapport)
+
+        # Téléchargement PDF
+        pdf_buf = create_pdf_buffer(rapport)
+        st.download_button(
+            "⬇️ Télécharger le rapport complet (PDF)",
+            data=pdf_buf,
+            file_name="rapport_medical.pdf",
+            mime="application/pdf"
+        )
+
+        # Sauvegarde de l’historique
         st.session_state.history.append({
             "temp": temp,
             "fc": fc,
@@ -121,62 +112,23 @@ def main():
             "rapport": rapport
         })
 
-    # Affichage du rapport et du bouton PDF sous la conclusion
-    if "last_rapport" in st.session_state:
-        verdict = st.session_state.last_verdict
-        st.markdown(f"**Verdict :** {'🆘 Urgence' if verdict else '✅ Stable'}")
-        st.markdown("**Rapport IA :**")
-        st.write(st.session_state.last_rapport)
-        pdf_buf = create_pdf_buffer(st.session_state.last_rapport)
-        st.download_button(
-            "⬇️ Télécharger ce rapport en PDF",
-            data=pdf_buf,
-            file_name="rapport_medical.pdf",
-            mime=PDF_MIME_TYPE
-        )
-
-    # Affichage de l'historique
+    # Affichage historique et export Excel
     if st.session_state.history:
         st.header("📜 Historique des rapports")
         df_hist = pd.DataFrame(st.session_state.history)
         st.dataframe(df_hist)
 
-        # Export Excel
-        excel_bytes = df_hist.to_excel(index=False).encode("utf-8")
+        excel_buf = io.BytesIO()
+        df_hist.to_excel(excel_buf, index=False)
+        excel_buf.seek(0)
         st.download_button(
-            "⬇️ Télécharger l'historique Excel",
-            data=excel_bytes,
+            "⬇️ Télécharger l'historique (Excel)",
+            data=excel_buf.getvalue(),
             file_name="historique.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-        # Téléchargement PDF du dernier rapport
-        if len(df_hist) > 0:
-            last_rapport = df_hist.iloc[-1]["rapport"]
-            pdf_buffer = create_pdf_buffer(last_rapport)
-            st.download_button(
-                "⬇️ Télécharger le dernier rapport PDF",
-                data=pdf_buffer,
-                file_name="rapport_medical.pdf",
-                mime=PDF_MIME_TYPE
-            )
-
-    # Section : Générer un PDF à partir d'un texte libre
-    st.header("Générer un PDF à partir d'un texte libre")
-    texte_libre = st.text_area("Votre texte à convertir en PDF", "", height=200)
-    if st.button("Générer le PDF du texte saisi"):
-        if texte_libre.strip():
-            pdf_buf_libre = create_pdf_buffer(texte_libre)
-            st.download_button(
-                "⬇️ Télécharger le PDF du texte saisi",
-                data=pdf_buf_libre,
-                file_name="texte_libre.pdf",
-                mime=PDF_MIME_TYPE
-            )
-        else:
-            st.warning("Veuillez saisir du texte avant de générer le PDF.")
 
 if __name__ == "__main__":
     main()
-
 
