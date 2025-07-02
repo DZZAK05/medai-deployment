@@ -3,21 +3,30 @@ from reportlab.lib.pagesizes import letter
 
 import streamlit as st
 import io
-from fpdf import FPDF
 
 def create_pdf_buffer(text: str) -> io.BytesIO:
     buf = io.BytesIO()
-    pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
-    for line in text.split("\n"):
-        pdf.multi_cell(0, 10, line)
-    pdf.output(buf)      # écrit dans le buffer
+    c = canvas.Canvas(buf, pagesize=letter)
+    _, height = letter
+    c.setFont("DejaVuSans", 11)
+    x_margin = 40
+    y = height - 40
+    line_height = 14
+    for paragraphe in text.split("\n"):
+        morceaux = [paragraphe[i:i+90] for i in range(0, len(paragraphe), 90)]
+        for ligne in morceaux:
+            if y < 40:
+                c.showPage()
+                c.setFont("DejaVuSans", 11)
+                y = height - 40
+            c.drawString(x_margin, y, ligne)
+            y -= line_height
+    c.showPage()
+    c.save()
     buf.seek(0)
     return buf
 
-st.title("🚀 Test PDF with FPDF2")
+st.title("🚀 Test PDF avec ReportLab")
 sample = st.text_area("Texte à mettre dans le PDF", 
     "\n".join(f"Ligne {i+1}: ceci est un texte d'exemple assez long pour tester la césure." for i in range(50)),
     height=300)

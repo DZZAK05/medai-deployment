@@ -2,15 +2,27 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import io
+import os
 
-from fpdf import FPDF
-from openai import OpenAI
+# ReportLab pour le PDF Unicode
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+
+# ML & OpenAI
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
+from openai import OpenAI
 
-# Initialise le client OpenAI
+# 1) Initialise le client OpenAI
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
+# 2) Enregistre la police Unicode (DejaVu Sans) au démarrage
+FONTS_DIR = os.path.join(os.path.dirname(__file__), "fonts")
+pdfmetrics.registerFont(
+    TTFont("DejaVuSans", os.path.join(FONTS_DIR, "DejaVuSans.ttf"))
+)
 
 @st.cache_data
 def generer_donnees(n=200, seed=42):
@@ -20,7 +32,6 @@ def generer_donnees(n=200, seed=42):
     pa   = rng.integers(100, 130, n)
     urgence = ((temp > 38.2) | (fc > 95)).astype(int)
     return pd.DataFrame({"temp": temp, "fc": fc, "pa": pa, "urgence": urgence})
-
 
 @st.cache_data
 def entrainer_modele(df):
@@ -33,13 +44,12 @@ def entrainer_modele(df):
     mdl.fit(X_train, y_train)
     return mdl
 
-
 def generer_rapport(t, c, p, verdict):
     prompt = (
         "Tu es un médecin rédigeant un rapport médical très détaillé.\n"
-        f"1) Examen : température={t}°C, fréquence cardiaque={c} bpm, pression={p} mmHg.\n"
-        f"2) Diagnostic : {'urgence' if verdict else 'stable'}.\n"
-        "3) Analyse des signes vitaux et recommandations cliniques.\n"
+        f"• Examen : température={t}°C, fréquence cardiaque={c} bpm, pression={p} mmHg.\n"
+        f"• Diagnostic : {'urgence' if verdict else 'stable'}.\n"
+        "• Analyse des signes vitaux et recommandations cliniques.\n"
         "Présente chaque point en paragraphe séparé."
     )
     resp = client.chat.completions.create(
@@ -50,37 +60,33 @@ def generer_rapport(t, c, p, verdict):
     )
     return resp.choices[0].message.content
 
+def creer_pdf_unicode(texte: str) -> io.BytesIO:
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=letter)
+    width, height = letter
 
-import io
-from fpdf import FPDF
+    # Utilise la police Unicode
+    c.setFont("DejaVuSans", 11)
 
-def create_pdf_buffer(report_text: str) -> io.BytesIO:
-    pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
+    x_margin = 40
+    y = height - 40
+    line_height = 14
 
-    usable_width = pdf.w - pdf.l_margin - pdf.r_margin
-    line_height  = pdf.font_size_pt * 0.35
+    for paragraphe in texte.split("\n"):
+        # découpe en morceaux d'environ 90 caractères
+        morceaux = [paragraphe[i:i+90] for i in range(0, len(paragraphe), 90)]
+        for ligne in morceaux:
+            if y < 40:
+                c.showPage()
+                c.setFont("DejaVuSans", 11)
+                y = height - 40
+            c.drawString(x_margin, y, ligne)
+            y -= line_height
 
-    for line in report_text.split("\n"):
-        pdf.multi_cell(usable_width, line_height, line)
-
-    # Récupère le PDF sous forme de bytearray
-    pdf_output = pdf.output(dest="S")
-
-    # Convertit en bytes si nécessaire
-    if isinstance(pdf_output, (bytes, bytearray)):
-        pdf_bytes = bytes(pdf_output)
-    else:
-        # cas où fpdf renverrait du str (rare)
-        pdf_bytes = pdf_output.encode("latin-1", "replace")
-
-    buf = io.BytesIO(pdf_bytes)
+    c.showPage()
+    c.save()
     buf.seek(0)
     return buf
-
-
 
 def main():
     st.title("IA Médicale – Démo")
@@ -104,16 +110,16 @@ def main():
         st.markdown("**Rapport IA :**")
         st.write(rapport)
 
-        # Téléchargement PDF
-        pdf_buf = create_pdf_buffer(rapport)
+        # Téléchargement PDF Unicode
+        pdf_buf = creer_pdf_unicode(rapport)
         st.download_button(
             "⬇️ Télécharger le rapport complet (PDF)",
             data=pdf_buf,
             file_name="rapport_medical.pdf",
-            mime="application/pdf"
+            mime="application/pdf",
         )
 
-        # Sauvegarde de l’historique
+        # Sauvegarde historique
         st.session_state.history.append({
             "temp": temp,
             "fc": fc,
@@ -134,11 +140,9 @@ def main():
         st.download_button(
             "⬇️ Télécharger l'historique (Excel)",
             data=excel_buf.getvalue(),
-            file_name="historique.xlsx",
+            file_name="historique_patients.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-
 if __name__ == "__main__":
     main()
-
