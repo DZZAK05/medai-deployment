@@ -4,25 +4,22 @@ import numpy as np
 import io
 import os
 
-# ReportLab pour le PDF Unicode
+# ReportLab pour le PDF
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
 
-# ML & OpenAI
+# Machine Learning
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
+
+# OpenAI
 from openai import OpenAI
 
-# 1) Initialise le client OpenAI
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+# Import de la fonction d'alerte mail
+from notifier import send_alert
 
-# 2) Enregistre la police Unicode (DejaVu Sans) au démarrage
-FONTS_DIR = os.path.join(os.path.dirname(__file__), "fonts")
-pdfmetrics.registerFont(
-    TTFont("DejaVuSans", os.path.join(FONTS_DIR, "DejaVuSans.ttf"))
-)
+# Initialisation du client OpenAI
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 @st.cache_data
 def generer_donnees(n=200, seed=42):
@@ -31,63 +28,60 @@ def generer_donnees(n=200, seed=42):
     fc   = rng.integers(60, 100, n)
     pa   = rng.integers(100, 130, n)
     urgence = ((temp > 38.2) | (fc > 95)).astype(int)
-    return pd.DataFrame({"temp": temp, "fc": fc, "pa": pa, "urgence": urgence})
+    return pd.DataFrame({
+        "Température (°C)": temp,
+        "Fréq. cardiaque (bpm)": fc,
+        "Pression (mmHg)": pa,
+        "Urgence": urgence
+    })
 
 @st.cache_data
 def entrainer_modele(df):
-    X = df[["temp", "fc", "pa"]]
-    y = df["urgence"]
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
-    )
-    mdl = RandomForestClassifier()
-    mdl.fit(X_train, y_train)
-    return mdl
+    X = df[["Température (°C)", "Fréq. cardiaque (bpm)", "Pression (mmHg)"]]
+    y = df["Urgence"]
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    modele = RandomForestClassifier()
+    modele.fit(X_train, y_train)
+    return modele
 
-def generer_rapport(t, c, p, verdict):
+# Fonction de génération du rapport via OpenAI
+# Correction : pas de saut de ligne dans la f-string
+
+def generer_rapport_ia(temp, fc, pa, verdict):
     prompt = (
-        "Tu es un médecin rédigeant un rapport médical très détaillé.\n"
-        f"• Examen : température={t}°C, fréquence cardiaque={c} bpm, pression={p} mmHg.\n"
-        f"• Diagnostic : {'urgence' if verdict else 'stable'}.\n"
-        "• Analyse des signes vitaux et recommandations cliniques.\n"
-        "Présente chaque point en paragraphe séparé."
+        f"Température : {temp}°C, Fréq. cardiaque : {fc} bpm, Pression : {pa} mmHg. "
+        f"Diagnostic IA : {'urgence' if verdict else 'stable'}. "
+        "Rédige un rapport médical détaillé en français, paragraphe par signe vital."
     )
     resp = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role":"user","content":prompt}],
-        max_tokens=1500,
-        temperature=0.7
+        max_tokens=800,
+        temperature=0.3
     )
-    return resp.choices[0].message.content
+    return resp.choices[0].message.content.strip()
 
+# Fonction de création du PDF utilisant la police intégrée Helvetica
 def creer_pdf_unicode(texte: str) -> io.BytesIO:
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=letter)
-    width, height = letter
-
-    # Utilise la police Unicode
-    c.setFont("DejaVuSans", 11)
-
-    x_margin = 40
-    y = height - 40
-    line_height = 14
-
-    for paragraphe in texte.split("\n"):
-        # découpe en morceaux d'environ 90 caractères
-        morceaux = [paragraphe[i:i+90] for i in range(0, len(paragraphe), 90)]
-        for ligne in morceaux:
-            if y < 40:
+    c.setFont("Helvetica", 11)
+    margin_x, margin_top = 40, 40
+    y = letter[1] - margin_top
+    line_h = 14
+    for parag in texte.split("\n"):
+        for chunk in [parag[i:i+90] for i in range(0, len(parag), 90)]:
+            if y < margin_top:
                 c.showPage()
-                c.setFont("DejaVuSans", 11)
-                y = height - 40
-            c.drawString(x_margin, y, ligne)
-            y -= line_height
-
-    c.showPage()
+                c.setFont("Helvetica", 11)
+                y = letter[1] - margin_top
+            c.drawString(margin_x, y, chunk)
+            y -= line_h
     c.save()
     buf.seek(0)
     return buf
 
+# Interface Streamlit
 def main():
     st.title("IA Médicale – Démo")
 
@@ -105,35 +99,47 @@ def main():
         verdict = modele.predict([[temp, fc, pa]])[0]
 
         st.markdown(f"**Verdict :** {'🆘 Urgence' if verdict else '✅ Stable'}")
+        # Envoi de l’alerte e-mail si urgence
+        if verdict == 1:
+            sujet = "⚠️ Alerte URGENCE patient détectée"
+            corps = (
+                f"Une urgence IA a été détectée :\n"
+                f"• Température : {temp} °C\n"
+                f"• Fréquence cardiaque : {fc} bpm\n"
+                f"• Pression artérielle : {pa} mmHg\n"
+            )
+            try:
+                send_alert(sujet, corps)
+                st.success("Alerte email envoyée avec succès !")
+            except Exception as e:
+                st.error(f"Erreur lors de l'envoi de l'alerte email : {e}")
 
-        rapport = generer_rapport(temp, fc, pa, verdict)
+        rapport = generer_rapport_ia(temp, fc, pa, verdict)
         st.markdown("**Rapport IA :**")
         st.write(rapport)
 
-        # Téléchargement PDF Unicode
+        # Téléchargement PDF
         pdf_buf = creer_pdf_unicode(rapport)
         st.download_button(
-            "⬇️ Télécharger le rapport complet (PDF)",
+            "⬇️ Télécharger le rapport PDF",
             data=pdf_buf,
             file_name="rapport_medical.pdf",
-            mime="application/pdf",
+            mime="application/pdf"
         )
 
-        # Sauvegarde historique
+        # Historique et export Excel
         st.session_state.history.append({
-            "temp": temp,
-            "fc": fc,
-            "pa": pa,
-            "verdict": "Urgence" if verdict else "Stable",
-            "rapport": rapport
+            "Température": temp,
+            "FC": fc,
+            "PA": pa,
+            "Verdict": "Urgence" if verdict else "Stable",
+            "Rapport": rapport
         })
 
-    # Affichage historique et export Excel
     if st.session_state.history:
         st.header("📜 Historique des rapports")
         df_hist = pd.DataFrame(st.session_state.history)
         st.dataframe(df_hist)
-
         excel_buf = io.BytesIO()
         df_hist.to_excel(excel_buf, index=False)
         excel_buf.seek(0)
