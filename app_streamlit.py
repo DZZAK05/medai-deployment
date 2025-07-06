@@ -19,6 +19,11 @@ client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 # ─── 1) MQTT SETUP ───────────────────────────────────────────
 
+
+
+BROKER_URL  = st.secrets.get("MQTT_BROKER_URL", "mqtt.eclipseprojects.io")
+BROKER_PORT = int(st.secrets.get("MQTT_BROKER_PORT", 1883))
+
 DATA = []
 
 def on_message(client, userdata, msg):
@@ -27,12 +32,21 @@ def on_message(client, userdata, msg):
     if len(DATA) > 100:
         DATA.pop(0)
 
-mqtt_client = mqtt.Client()
-mqtt_client.on_message = on_message
-mqtt_client.connect("localhost", 1883)
-mqtt_client.subscribe("medai/capteurs")
-mqtt_client.loop_start()
+def main():
+    st.title("IA Médicale – Démo")
 
+    # ─── Initialise le client MQTT ─────────────────────────────
+    mqtt_client = mqtt.Client()
+    mqtt_client.on_message = on_message
+
+    try:
+        mqtt_client.connect(BROKER_URL, BROKER_PORT, keepalive=60)
+        mqtt_client.subscribe("medai/capteurs")
+        mqtt_client.loop_start()
+    except Exception:
+        DATA.clear()
+        st.warning("⚠️ Impossible de se connecter au broker MQTT "
+                   f"({BROKER_URL}:{BROKER_PORT}).")
 
 # ─── 3) FONCTIONS ML & PDF ───────────────────────────────────
 
