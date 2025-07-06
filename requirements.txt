@@ -8,4 +8,6 @@ xlsxwriter
 flask
 fpdf
 fpdf2
+twilio
 
+secure-smtplib

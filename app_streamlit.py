@@ -1,25 +1,40 @@
 import streamlit as st
+import json
 import pandas as pd
 import numpy as np
 import io
-import os
+import paho.mqtt.client as mqtt
+import time, json, random
 
-# ReportLab pour le PDF
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
-
-# Machine Learning
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-
-# OpenAI
 from openai import OpenAI
-
-# Import de la fonction d'alerte mail
 from notifier import send_alert
 
-# Initialisation du client OpenAI
+# ─── 2) OPENAI CLIENT ────────────────────────────────────────
+
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+
+# ─── 1) MQTT SETUP ───────────────────────────────────────────
+
+DATA = []
+
+def on_message(client, userdata, msg):
+    payload = json.loads(msg.payload.decode())
+    DATA.append(payload)
+    if len(DATA) > 100:
+        DATA.pop(0)
+
+mqtt_client = mqtt.Client()
+mqtt_client.on_message = on_message
+mqtt_client.connect("localhost", 1883)
+mqtt_client.subscribe("medai/capteurs")
+mqtt_client.loop_start()
+
+
+# ─── 3) FONCTIONS ML & PDF ───────────────────────────────────
 
 @st.cache_data
 def generer_donnees(n=200, seed=42):
@@ -40,12 +55,9 @@ def entrainer_modele(df):
     X = df[["Température (°C)", "Fréq. cardiaque (bpm)", "Pression (mmHg)"]]
     y = df["Urgence"]
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    modele = RandomForestClassifier()
-    modele.fit(X_train, y_train)
-    return modele
-
-# Fonction de génération du rapport via OpenAI
-# Correction : pas de saut de ligne dans la f-string
+    mdl = RandomForestClassifier()
+    mdl.fit(X_train, y_train)
+    return mdl
 
 def generer_rapport_ia(temp, fc, pa, verdict):
     prompt = (
@@ -61,8 +73,7 @@ def generer_rapport_ia(temp, fc, pa, verdict):
     )
     return resp.choices[0].message.content.strip()
 
-# Fonction de création du PDF utilisant la police intégrée Helvetica
-def creer_pdf_unicode(texte: str) -> io.BytesIO:
+def creer_pdf(texte: str) -> io.BytesIO:
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=letter)
     c.setFont("Helvetica", 11)
@@ -81,10 +92,24 @@ def creer_pdf_unicode(texte: str) -> io.BytesIO:
     buf.seek(0)
     return buf
 
-# Interface Streamlit
+# ─── 4) UI STREAMLIT ──────────────────────────────────────────
+
 def main():
     st.title("IA Médicale – Démo")
 
+    # 4.1 – Dashboard temps réel MQTT
+    st.subheader("📈 Flux capteurs en temps réel")
+    st.write("🔍 DATA length =", len(DATA))
+    st.write("🔍 Extrait DATA[:3] =", DATA[:3])
+
+    if DATA:
+        df_live = pd.DataFrame(DATA).set_index("timestamp")
+        df_live.index = pd.to_datetime(df_live.index, unit="s")
+        st.line_chart(df_live[["temperature","fc","pa"]])
+    else:
+        st.info("En attente des premières données MQTT…")
+
+    # 4.2 – Test patient & génération de rapport
     st.sidebar.header("Test patient")
     temp = st.sidebar.number_input("Température (°C)", 34.0, 42.0, 37.0, 0.1)
     fc   = st.sidebar.number_input("Fréq. cardiaque (bpm)", 40, 180, 75, 1)
@@ -97,9 +122,8 @@ def main():
         df      = generer_donnees()
         modele  = entrainer_modele(df)
         verdict = modele.predict([[temp, fc, pa]])[0]
-
         st.markdown(f"**Verdict :** {'🆘 Urgence' if verdict else '✅ Stable'}")
-        # Envoi de l’alerte e-mail si urgence
+
         if verdict == 1:
             sujet = "⚠️ Alerte URGENCE patient détectée"
             corps = (
@@ -118,8 +142,7 @@ def main():
         st.markdown("**Rapport IA :**")
         st.write(rapport)
 
-        # Téléchargement PDF
-        pdf_buf = creer_pdf_unicode(rapport)
+        pdf_buf = creer_pdf(rapport)
         st.download_button(
             "⬇️ Télécharger le rapport PDF",
             data=pdf_buf,
@@ -127,7 +150,6 @@ def main():
             mime="application/pdf"
         )
 
-        # Historique et export Excel
         st.session_state.history.append({
             "Température": temp,
             "FC": fc,
@@ -136,6 +158,7 @@ def main():
             "Rapport": rapport
         })
 
+    # 4.3 – Historique & Excel
     if st.session_state.history:
         st.header("📜 Historique des rapports")
         df_hist = pd.DataFrame(st.session_state.history)
@@ -152,3 +175,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

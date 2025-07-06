@@ -94,3 +94,33 @@ def accueil():
 if __name__ == "__main__":
     app.run(debug=True)
 
+if st.sidebar.button("Prédire & Générer rapport"):
+    verdict = modele.predict([[temp, fc, pa]])[0]
+    st.markdown("**Verdict :** " + ("🆘 Urgence" if verdict else "✅ Stable"))
+    rapport = generer_rapport(temp, fc, pa, verdict)
+    st.markdown("**Rapport IA :**")
+    st.write(rapport)
+
+    # —> Bouton de téléchargement PDF
+    pdf_bytes = make_pdf(rapport)
+    st.download_button(
+        label="📄 Télécharger le rapport (PDF)",
+        data=pdf_bytes,
+        file_name="rapport_medical.pdf",
+        mime="application/pdf")
+
+    # —> Historique en mémoire (exemple basique dans session_state)
+    hist = st.session_state.get("history", [])
+    hist.append({"Température": temp, "FC": fc, "PA": pa, "Verdict": verdict, "Rapport": rapport})
+    st.session_state["history"] = hist
+
+    df_hist = pd.DataFrame(st.session_state["history"])
+    st.dataframe(df_hist)
+
+    # —> Bouton de téléchargement Excel
+    excel_bytes = make_excel(df_hist)
+    st.download_button(
+        label="📊 Télécharger l'historique (Excel)",
+        data=excel_bytes,
+        file_name="historique_patients.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
