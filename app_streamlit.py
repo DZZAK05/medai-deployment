@@ -21,7 +21,7 @@ client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 
 
-BROKER_URL  = st.secrets.get("MQTT_BROKER_URL", "mqtt.eclipseprojects.io")
+BROKER_URL  = st.secrets.get("MQTT_BROKER_URL","test.mosquitto.org")
 BROKER_PORT = int(st.secrets.get("MQTT_BROKER_PORT", 1883))
 
 DATA = []
