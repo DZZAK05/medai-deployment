@@ -1,54 +1,50 @@
 import streamlit as st
-import json
 import pandas as pd
 import numpy as np
 import io
-import paho.mqtt.client as mqtt
-import time, json, random
+import os
 
+import json
+import pandas as pd
+import numpy as np
+import streamlit as st
+import paho.mqtt.client as mqtt 
+
+# ReportLab pour le PDF
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
+
+# Machine Learning
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
+
+# OpenAI
 from openai import OpenAI
+
+# Import de la fonction d'alerte mail
 from notifier import send_alert
 
-# ─── 2) OPENAI CLIENT ────────────────────────────────────────
-
+# Initialisation du client OpenAI
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-# ─── 1) MQTT SETUP ───────────────────────────────────────────
-
-
-
-BROKER_URL  = st.secrets.get("MQTT_BROKER_URL","test.mosquitto.org")
-BROKER_PORT = int(st.secrets.get("MQTT_BROKER_PORT", 1883))
 
 DATA = []
 
+# Callback : appelé à chaque nouveau message MQTT
 def on_message(client, userdata, msg):
     payload = json.loads(msg.payload.decode())
     DATA.append(payload)
+    # Ne garder que les 100 derniers points
     if len(DATA) > 100:
         DATA.pop(0)
 
-def main():
-    st.title("IA Médicale – Démo")
+# Configure et démarre le client MQTT
+mqtt_client = mqtt.Client()
+mqtt_client.on_message = on_message
+mqtt_client.connect("localhost", 1883)       # ou l'adresse de ton broker
+mqtt_client.subscribe("medai/capteurs")      # même topic que ton simulateur
+mqtt_client.loop_start()                     # démarrage en arrière-plan
 
-    # ─── Initialise le client MQTT ─────────────────────────────
-    mqtt_client = mqtt.Client()
-    mqtt_client.on_message = on_message
-
-    try:
-        mqtt_client.connect(BROKER_URL, BROKER_PORT, keepalive=60)
-        mqtt_client.subscribe("medai/capteurs")
-        mqtt_client.loop_start()
-    except Exception:
-        DATA.clear()
-        st.warning("⚠️ Impossible de se connecter au broker MQTT "
-                   f"({BROKER_URL}:{BROKER_PORT}).")
-
-# ─── 3) FONCTIONS ML & PDF ───────────────────────────────────
 
 @st.cache_data
 def generer_donnees(n=200, seed=42):
@@ -69,9 +65,12 @@ def entrainer_modele(df):
     X = df[["Température (°C)", "Fréq. cardiaque (bpm)", "Pression (mmHg)"]]
     y = df["Urgence"]
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    mdl = RandomForestClassifier()
-    mdl.fit(X_train, y_train)
-    return mdl
+    modele = RandomForestClassifier()
+    modele.fit(X_train, y_train)
+    return modele
+
+# Fonction de génération du rapport via OpenAI
+# Correction : pas de saut de ligne dans la f-string
 
 def generer_rapport_ia(temp, fc, pa, verdict):
     prompt = (
@@ -87,7 +86,8 @@ def generer_rapport_ia(temp, fc, pa, verdict):
     )
     return resp.choices[0].message.content.strip()
 
-def creer_pdf(texte: str) -> io.BytesIO:
+# Fonction de création du PDF utilisant la police intégrée Helvetica
+def creer_pdf_unicode(texte: str) -> io.BytesIO:
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=letter)
     c.setFont("Helvetica", 11)
@@ -106,24 +106,36 @@ def creer_pdf(texte: str) -> io.BytesIO:
     buf.seek(0)
     return buf
 
-# ─── 4) UI STREAMLIT ──────────────────────────────────────────
-
+# Interface Streamlit
 def main():
+    # —⁋ Injection PWA ⁋————————————————————————————————————
+    st.markdown(
+        """ 
+           <link rel="apple-touch-icon" sizes="180x180" href="/static/icon-192 (1).png">
+           <link rel="apple-touch-icon" sizes="152x152" href="/static/icon-192 (2).png">
+           <link rel="apple-touch-icon" sizes="120x120" href="/static/icon-192 (3).png">
+           <link rel="apple-touch-icon" sizes="76x76"   href="/static/icon-192 (4).png">
+        <link rel="manifest" href="/static/manifest.json">
+        <meta name="theme-color" content="#2b6cb0">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+        """,
+        unsafe_allow_html=True
+    )
+    # —⁋ Fin Injection PWA ⁋—————————————————————————————
+
     st.title("IA Médicale – Démo")
 
-    # 4.1 – Dashboard temps réel MQTT
     st.subheader("📈 Flux capteurs en temps réel")
-    st.write("🔍 DATA length =", len(DATA))
-    st.write("🔍 Extrait DATA[:3] =", DATA[:3])
 
-    if DATA:
-        df_live = pd.DataFrame(DATA).set_index("timestamp")
-        df_live.index = pd.to_datetime(df_live.index, unit="s")
-        st.line_chart(df_live[["temperature","fc","pa"]])
-    else:
-        st.info("En attente des premières données MQTT…")
+if DATA:
+    df_live = pd.DataFrame(DATA).set_index("timestamp")
+    df_live.index = pd.to_datetime(df_live.index, unit="s")
+    st.line_chart(df_live[["temperature","fc","pa"]])
+else:
+    st.info("En attente des premières données MQTT…")
 
-    # 4.2 – Test patient & génération de rapport
+
     st.sidebar.header("Test patient")
     temp = st.sidebar.number_input("Température (°C)", 34.0, 42.0, 37.0, 0.1)
     fc   = st.sidebar.number_input("Fréq. cardiaque (bpm)", 40, 180, 75, 1)
@@ -136,8 +148,9 @@ def main():
         df      = generer_donnees()
         modele  = entrainer_modele(df)
         verdict = modele.predict([[temp, fc, pa]])[0]
-        st.markdown(f"**Verdict :** {'🆘 Urgence' if verdict else '✅ Stable'}")
 
+        st.markdown(f"**Verdict :** {'🆘 Urgence' if verdict else '✅ Stable'}")
+        # Envoi de l’alerte e-mail si urgence
         if verdict == 1:
             sujet = "⚠️ Alerte URGENCE patient détectée"
             corps = (
@@ -156,7 +169,8 @@ def main():
         st.markdown("**Rapport IA :**")
         st.write(rapport)
 
-        pdf_buf = creer_pdf(rapport)
+        # Téléchargement PDF
+        pdf_buf = creer_pdf_unicode(rapport)
         st.download_button(
             "⬇️ Télécharger le rapport PDF",
             data=pdf_buf,
@@ -164,6 +178,7 @@ def main():
             mime="application/pdf"
         )
 
+        # Historique et export Excel
         st.session_state.history.append({
             "Température": temp,
             "FC": fc,
@@ -172,7 +187,6 @@ def main():
             "Rapport": rapport
         })
 
-    # 4.3 – Historique & Excel
     if st.session_state.history:
         st.header("📜 Historique des rapports")
         df_hist = pd.DataFrame(st.session_state.history)
@@ -189,4 +203,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
